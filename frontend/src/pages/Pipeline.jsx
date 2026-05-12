@@ -15,6 +15,10 @@ export default function Pipeline() {
   const [leads, setLeads] = useState([])
   const [showForm, setShowForm] = useState(false)
   const [form, setForm] = useState({ title: '', value: '', notes: '' })
+  const [suggestions, setSuggestions] = useState({})
+  const [suggestLoading, setSuggestLoading] = useState({})
+  const [entities, setEntities] = useState(null)
+  const [extractTimer, setExtractTimer] = useState(null)
 
   const load = () => api.get('/leads/').then(r => setLeads(r.data))
   useEffect(() => { load() }, [])
@@ -41,6 +45,32 @@ export default function Pipeline() {
     setLeads(prev => prev.filter(l => l.id !== id))
   }
 
+  const suggestAction = async id => {
+    setSuggestLoading(s => ({ ...s, [id]: true }))
+    try {
+      const r = await api.post(`/ai/leads/${id}/suggest-next-action`)
+      setSuggestions(s => ({ ...s, [id]: r.data.suggestion }))
+    } catch (e) {
+      setSuggestions(s => ({ ...s, [id]: e.response?.data?.detail || 'AI request failed' }))
+    } finally {
+      setSuggestLoading(s => ({ ...s, [id]: false }))
+    }
+  }
+
+  const onNotesChange = e => {
+    const text = e.target.value
+    setForm({ ...form, notes: text })
+    if (extractTimer) clearTimeout(extractTimer)
+    if (text.trim().length < 10) { setEntities(null); return }
+    const t = setTimeout(async () => {
+      try {
+        const r = await api.post('/ai/extract-entities', { text })
+        setEntities(r.data)
+      } catch { setEntities(null) }
+    }, 600)
+    setExtractTimer(t)
+  }
+
   return (
     <div>
       <div className="flex items-center justify-between mb-6">
@@ -57,10 +87,18 @@ export default function Pipeline() {
             className="border border-gray-200 rounded-lg px-3 py-2 text-sm flex-1 min-w-40 focus:outline-none focus:ring-2 focus:ring-indigo-300" />
           <input placeholder="Value ($)" type="number" value={form.value} onChange={e => setForm({ ...form, value: e.target.value })}
             className="border border-gray-200 rounded-lg px-3 py-2 text-sm w-32 focus:outline-none focus:ring-2 focus:ring-indigo-300" />
-          <input placeholder="Notes" value={form.notes} onChange={e => setForm({ ...form, notes: e.target.value })}
+          <input placeholder="Notes" value={form.notes} onChange={onNotesChange}
             className="border border-gray-200 rounded-lg px-3 py-2 text-sm flex-1 min-w-40 focus:outline-none focus:ring-2 focus:ring-indigo-300" />
           <button type="submit"
             className="bg-indigo-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-indigo-700">Save</button>
+          {entities && (
+            <div className="basis-full flex flex-wrap gap-1.5 pt-1">
+              {entities.people?.map(p => <span key={'p'+p} className="text-xs bg-blue-50 text-blue-700 px-2 py-0.5 rounded-full">👤 {p}</span>)}
+              {entities.companies?.map(c => <span key={'c'+c} className="text-xs bg-purple-50 text-purple-700 px-2 py-0.5 rounded-full">🏢 {c}</span>)}
+              {entities.dates?.map(d => <span key={'d'+d} className="text-xs bg-amber-50 text-amber-700 px-2 py-0.5 rounded-full">📅 {d}</span>)}
+              {entities.amounts?.map(a => <span key={'a'+a} className="text-xs bg-green-50 text-green-700 px-2 py-0.5 rounded-full">💰 {a}</span>)}
+            </div>
+          )}
         </form>
       )}
 
@@ -89,6 +127,13 @@ export default function Pipeline() {
                               <p className="text-xs text-indigo-600 font-medium mt-1">${lead.value.toLocaleString()}</p>
                             )}
                             {lead.notes && <p className="text-xs text-gray-400 mt-1 truncate">{lead.notes}</p>}
+                            <button onClick={() => suggestAction(lead.id)} disabled={suggestLoading[lead.id]}
+                              className="mt-2 text-xs text-indigo-600 hover:text-indigo-800 disabled:opacity-50">
+                              {suggestLoading[lead.id] ? '✨ Thinking...' : '✨ Suggest next action'}
+                            </button>
+                            {suggestions[lead.id] && (
+                              <p className="text-xs text-gray-600 mt-1 bg-indigo-50 rounded p-2 leading-snug">{suggestions[lead.id]}</p>
+                            )}
                           </div>
                         )}
                       </Draggable>
